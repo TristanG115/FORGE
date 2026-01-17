@@ -1,12 +1,12 @@
 # FORGE
 
-**F**lexible **O**n-device **R**eal-time **G**ame-asset **E**ngine
+**F**orm **O**riented **R**eference **G**eneration **E**ngine
 
 FORGE is a deterministic, local-first asset generation tool designed for game development. It provides an AI-assisted (parameter-only) pipeline that transforms 2D silhouettes and images into controlled 3D game assets, running entirely on local machines without any cloud services.
 
 ## Overview
 
-FORGE employs a modular, C-core architecture to deliver a deterministic 2D-to-3D asset pipeline with the following key features:
+FORGE employs a modular, Rust architecture to deliver a deterministic 2D-to-3D asset pipeline with the following key features:
 
 - **Deterministic Processing**: Reproducible results through parameter-based control
 - **AI-Assisted Generation**: Parameter-only AI integration for predictable outputs
@@ -20,7 +20,7 @@ FORGE employs a modular, C-core architecture to deliver a deterministic 2D-to-3D
 FORGE is organized into four core modules:
 
 ### forge-core
-C-based deterministic asset processing engine providing fundamental pipeline operations:
+Rust-based deterministic asset processing engine providing fundamental pipeline operations:
 - Asset data structures and management
 - Deterministic transformation algorithms
 - Session state management
