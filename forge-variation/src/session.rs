@@ -6,7 +6,10 @@
 //! - generated variation specs (seeded + reproducible)
 //! - user approvals (with real-world dimensions + export settings)
 
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::Path;
 use uuid::Uuid;
 
 use crate::{
@@ -217,4 +220,28 @@ pub enum SessionError {
 
     #[error("unknown variation_id: {variation_id}")]
     UnknownVariation { variation_id: String },
+}
+
+/// Save a session to disk as pretty JSON.
+pub fn save_session(path: impl AsRef<Path>, session: &SessionV1) -> anyhow::Result<()> {
+    let path = path.as_ref();
+
+    if let Some(parent) = path.parent() {
+        // fs::write does NOT create directories; tests may run with missing `target/`
+        fs::create_dir_all(parent)
+            .with_context(|| format!("create parent dir: {}", parent.display()))?;
+    }
+
+    let json = serde_json::to_string_pretty(session).context("serialize session to json")?;
+    fs::write(path, json).with_context(|| format!("write session file: {}", path.display()))?;
+    Ok(())
+}
+
+/// Load a session from disk.
+pub fn load_session(path: impl AsRef<Path>) -> anyhow::Result<SessionV1> {
+    let path = path.as_ref();
+    let data = fs::read_to_string(path)
+        .with_context(|| format!("read session file: {}", path.display()))?;
+    let session: SessionV1 = serde_json::from_str(&data).context("parse session json")?;
+    Ok(session)
 }

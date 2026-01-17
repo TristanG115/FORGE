@@ -1,0 +1,61 @@
+# =========================
+# Rust / Cargo
+# =========================
+target/
+**/target/
+Cargo.lock
+
+# Rustfmt / Clippy
+.rustfmt.toml.bak
+
+# =========================
+# OS / Editor noise
+# =========================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Windows junk
+*.stackdump
+
+# =========================
+# IDEs
+# =========================
+.vscode/
+.idea/
+*.iml
+
+# =========================
+# Logs / temp
+# =========================
+*.log
+*.tmp
+*.swp
+
+# =========================
+# FORGE-specific
+# =========================
+
+# Saved sessions (user-generated)
+*.forge.json
+
+# Generated reference images
+refs/
+previews/
+renders/
+
+# Generated assets / exports
+exports/
+assets_generated/
+
+# Local AI models / weights
+models/
+*.bin
+*.gguf
+*.onnx
+
+# =========================
+# Testing artifacts
+# =========================
+coverage/
+*.profraw

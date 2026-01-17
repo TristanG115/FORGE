@@ -220,6 +220,7 @@ pub enum ParamError {
 pub mod session;
 
 pub use session::{
-    ApprovedDesignV1, BaseInputRefV1, BaseInputType, CollisionMode, DimensionsCm, ExportSettingsV1,
-    IntentEntryV1, PivotMode, SessionError, SessionV1, SESSION_FILE_EXT,
+    load_session, save_session, ApprovedDesignV1, BaseInputRefV1, BaseInputType, CollisionMode,
+    DimensionsCm, ExportSettingsV1, IntentEntryV1, PivotMode, SessionError, SessionV1,
+    SESSION_FILE_EXT,
 };
