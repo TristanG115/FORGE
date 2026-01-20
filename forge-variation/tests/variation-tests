@@ -1,0 +1,789 @@
+//! Comprehensive tests for forge-variation module
+
+use forge_variation::*;
+use std::collections::HashSet;
+use uuid::Uuid;
+
+// ============================================================================
+// Seed Tests
+// ============================================================================
+
+#[test]
+fn seed_derivation_is_deterministic() {
+    let base = Seed(12345);
+
+    // Same base + index should always give same result
+    let derived1 = base.derive(0);
+    let derived2 = base.derive(0);
+    assert_eq!(derived1, derived2);
+
+    // Different indices give different results
+    let derived_a = base.derive(0);
+    let derived_b = base.derive(1);
+    assert_ne!(derived_a, derived_b);
+}
+
+#[test]
+fn seed_derivation_is_well_distributed() {
+    let base = Seed(42);
+    let seeds: Vec<_> = (0..1000).map(|i| base.derive(i)).collect();
+
+    // All seeds should be unique (good distribution)
+    let unique: HashSet<_> = seeds.iter().collect();
+    assert_eq!(unique.len(), 1000);
+}
+
+#[test]
+fn seed_derivation_stable_across_runs() {
+    // These exact values should never change across FORGE versions
+    let base = Seed(42);
+    assert_eq!(base.derive(0).0, 7821151799432520022);
+    assert_eq!(base.derive(1).0, 5058005689260404590);
+    assert_eq!(base.derive(100).0, 10506714266948481181);
+}
+
+// ============================================================================
+// Bounded Parameter Tests
+// ============================================================================
+
+#[test]
+fn bounded_clamps_on_construction() {
+    let param = Bounded::new(5.0, 0.0, 2.0).unwrap();
+    assert_eq!(param.value, 2.0); // Clamped to max
+
+    let param = Bounded::new(-5.0, 0.0, 2.0).unwrap();
+    assert_eq!(param.value, 0.0); // Clamped to min
+
+    let param = Bounded::new(1.5, 0.0, 2.0).unwrap();
+    assert_eq!(param.value, 1.5); // Within range
+}
+
+#[test]
+fn bounded_rejects_invalid_bounds() {
+    let result = Bounded::new(1.0, 2.0, 0.0);
+    assert!(result.is_err()); // min > max
+
+    let result = Bounded::new(1.0, 1.0, 1.0);
+    assert!(result.is_err()); // min == max
+}
+
+#[test]
+fn bounded_set_clamps_value() {
+    let mut param = Bounded::new(1.0, 0.0, 2.0).unwrap();
+
+    param.set(1.5);
+    assert_eq!(param.value, 1.5);
+
+    param.set(5.0);
+    assert_eq!(param.value, 2.0); // Clamped to max
+
+    param.set(-5.0);
+    assert_eq!(param.value, 0.0); // Clamped to min
+}
+
+#[test]
+fn bounded_clamped_returns_new_instance() {
+    let original = Bounded { value: 5.0, min: 0.0, max: 2.0 };
+    let clamped = original.clamped();
+
+    assert_eq!(original.value, 5.0); // Original unchanged
+    assert_eq!(clamped.value, 2.0);  // New instance clamped
+}
+
+// ============================================================================
+// ParameterSet Tests
+// ============================================================================
+
+#[test]
+fn parameter_set_defaults_are_valid() {
+    let params = ParameterSetV1::default();
+
+    assert!(params.validate().is_ok());
+
+    // Check all defaults are within bounds
+    assert!(params.height_scale.value >= params.height_scale.min);
+    assert!(params.height_scale.value <= params.height_scale.max);
+    assert!(params.extrusion_depth.value >= params.extrusion_depth.min);
+    assert!(params.extrusion_depth.value <= params.extrusion_depth.max);
+}
+
+#[test]
+fn parameter_delta_applies_correctly() {
+    let mut params = ParameterSetV1::default();
+
+    let original_erosion = params.erosion_intensity.value;
+    let original_symmetry = params.symmetry_break.value;
+
+    let delta = ParameterDeltaV1 {
+        erosion_intensity: Some(0.3),
+        symmetry_break: Some(0.15),
+        ..Default::default()
+    };
+
+    params.apply_delta(&delta);
+
+    assert_eq!(params.erosion_intensity.value, original_erosion + 0.3);
+    assert_eq!(params.symmetry_break.value, original_symmetry + 0.15);
+}
+
+#[test]
+fn parameter_delta_clamps_after_application() {
+    let mut params = ParameterSetV1::default();
+
+    // Try to push erosion way past max (1.0)
+    let delta = ParameterDeltaV1 {
+        erosion_intensity: Some(5.0),
+        ..Default::default()
+    };
+
+    params.apply_delta(&delta);
+
+    // Should be clamped to max
+    assert_eq!(params.erosion_intensity.value, params.erosion_intensity.max);
+    assert!(params.validate().is_ok());
+}
+
+#[test]
+fn parameter_delta_empty_does_nothing() {
+    let original = ParameterSetV1::default();
+    let mut params = original.clone();
+
+    let delta = ParameterDeltaV1::default(); // All None
+    params.apply_delta(&delta);
+
+    assert_eq!(params, original);
+}
+
+#[test]
+fn parameter_clamp_all_fixes_out_of_bounds() {
+    let mut params = ParameterSetV1::default();
+
+    // Manually corrupt a value (bypassing set method)
+    params.height_scale.value = 10.0; // Way past max of 2.0
+
+    assert!(params.validate().is_err()); // Should be invalid
+
+    params = params.clamp_all();
+
+    assert!(params.validate().is_ok()); // Should be fixed
+    assert_eq!(params.height_scale.value, 2.0);
+}
+
+// ============================================================================
+// VariationSpec Tests
+// ============================================================================
+
+#[test]
+fn variation_batch_generates_correct_count() {
+    let session_id = Uuid::new_v4();
+    let variations = VariationSpecV1::generate_batch(
+        session_id,
+        AssetClass::ArenaProp,
+        Seed(999),
+        ParameterSetV1::default(),
+        "test intent",
+        5,
+    );
+
+    assert_eq!(variations.len(), 5);
+}
+
+#[test]
+fn variation_batch_has_unique_seeds() {
+    let session_id = Uuid::new_v4();
+    let variations = VariationSpecV1::generate_batch(
+        session_id,
+        AssetClass::Pillar,
+        Seed(42),
+        ParameterSetV1::default(),
+        "test",
+        10,
+    );
+
+    let seeds: HashSet<_> = variations.iter().map(|v| v.seed).collect();
+    assert_eq!(seeds.len(), 10); // All unique
+}
+
+#[test]
+fn variation_batch_has_unique_ids() {
+    let session_id = Uuid::new_v4();
+    let variations = VariationSpecV1::generate_batch(
+        session_id,
+        AssetClass::ArenaWall,
+        Seed(123),
+        ParameterSetV1::default(),
+        "test",
+        10,
+    );
+
+    let ids: HashSet<_> = variations.iter().map(|v| &v.variation_id).collect();
+    assert_eq!(ids.len(), 10); // All unique
+}
+
+#[test]
+fn variation_batch_is_deterministic() {
+    let session_id = Uuid::new_v4();
+    let params = ParameterSetV1::default();
+
+    let batch1 = VariationSpecV1::generate_batch(
+        session_id,
+        AssetClass::Debris,
+        Seed(555),
+        params.clone(),
+        "same intent",
+        5,
+    );
+
+    let batch2 = VariationSpecV1::generate_batch(
+        session_id,
+        AssetClass::Debris,
+        Seed(555),
+        params,
+        "same intent",
+        5,
+    );
+
+    // Same inputs = same outputs
+    assert_eq!(batch1.len(), batch2.len());
+    for (v1, v2) in batch1.iter().zip(batch2.iter()) {
+        assert_eq!(v1.variation_id, v2.variation_id);
+        assert_eq!(v1.seed, v2.seed);
+    }
+}
+
+// ============================================================================
+// Session Creation Tests
+// ============================================================================
+
+#[test]
+fn session_creation_with_valid_path() {
+    // Create a temp file for testing
+    let temp_dir = std::env::temp_dir();
+    let test_file = temp_dir.join("forge_test_input.png");
+    std::fs::write(&test_file, b"fake image data").unwrap();
+
+    let result = SessionV1::new(
+        AssetClass::ArenaProp,
+        BaseInputRefV1 {
+            input_type: BaseInputType::Image,
+            source_path: test_file.to_str().unwrap().to_string(),
+        },
+        Seed(42),
+    );
+
+    assert!(result.is_ok());
+
+    let session = result.unwrap();
+    assert_eq!(session.schema_version, PARAM_SCHEMA_VERSION);
+    assert_eq!(session.intent_history.len(), 0);
+    assert_eq!(session.variations.len(), 0);
+    assert_eq!(session.approvals.len(), 0);
+
+    // Cleanup
+    std::fs::remove_file(&test_file).ok();
+}
+
+#[test]
+fn session_creation_with_invalid_path_fails() {
+    let result = SessionV1::new(
+        AssetClass::ArenaProp,
+        BaseInputRefV1 {
+            input_type: BaseInputType::Image,
+            source_path: "/this/path/does/not/exist.png".to_string(),
+        },
+        Seed(42),
+    );
+
+    assert!(result.is_err());
+    assert!(matches!(result.unwrap_err(), SessionError::InvalidPath { .. }));
+}
+
+// ============================================================================
+// Intent History Tests
+// ============================================================================
+
+#[test]
+fn push_intent_increments_iteration() {
+    let temp_dir = std::env::temp_dir();
+    let test_file = temp_dir.join("forge_test_intent.png");
+    std::fs::write(&test_file, b"data").unwrap();
+
+    let mut session = SessionV1::new(
+        AssetClass::ArenaProp,
+        BaseInputRefV1 {
+            input_type: BaseInputType::Drawn,
+            source_path: test_file.to_str().unwrap().to_string(),
+        },
+        Seed(42),
+    ).unwrap();
+
+    let iter0 = session.push_intent("first intent").unwrap();
+    let iter1 = session.push_intent("second intent").unwrap();
+    let iter2 = session.push_intent("third intent").unwrap();
+
+    assert_eq!(iter0, 0);
+    assert_eq!(iter1, 1);
+    assert_eq!(iter2, 2);
+    assert_eq!(session.intent_history.len(), 3);
+
+    std::fs::remove_file(&test_file).ok();
+}
+
+#[test]
+fn push_intent_rejects_empty_strings() {
+    let temp_dir = std::env::temp_dir();
+    let test_file = temp_dir.join("forge_test_empty.png");
+    std::fs::write(&test_file, b"data").unwrap();
+
+    let mut session = SessionV1::new(
+        AssetClass::ArenaProp,
+        BaseInputRefV1 {
+            input_type: BaseInputType::Drawn,
+            source_path: test_file.to_str().unwrap().to_string(),
+        },
+        Seed(42),
+    ).unwrap();
+
+    assert!(session.push_intent("").is_err());
+    assert!(session.push_intent("   ").is_err());
+    assert!(session.push_intent("\n\t").is_err());
+    assert!(session.push_intent("valid").is_ok());
+
+    std::fs::remove_file(&test_file).ok();
+}
+
+// ============================================================================
+// Variation Generation Tests
+// ============================================================================
+
+#[test]
+fn generate_variations_creates_batch() {
+    let temp_dir = std::env::temp_dir();
+    let test_file = temp_dir.join("forge_test_gen.png");
+    std::fs::write(&test_file, b"data").unwrap();
+
+    let mut session = SessionV1::new(
+        AssetClass::Pillar,
+        BaseInputRefV1 {
+            input_type: BaseInputType::Drawn,
+            source_path: test_file.to_str().unwrap().to_string(),
+        },
+        Seed(999),
+    ).unwrap();
+
+    session.generate_variations(7, "make it epic");
+
+    assert_eq!(session.variations.len(), 7);
+
+    // All should share the same session_id and asset_class
+    for var in &session.variations {
+        assert_eq!(var.base_session_id, session.session_id);
+        assert_eq!(var.asset_class, AssetClass::Pillar);
+        assert_eq!(var.intent_text, "make it epic");
+    }
+
+    std::fs::remove_file(&test_file).ok();
+}
+
+#[test]
+fn generate_variations_replaces_previous() {
+    let temp_dir = std::env::temp_dir();
+    let test_file = temp_dir.join("forge_test_replace.png");
+    std::fs::write(&test_file, b"data").unwrap();
+
+    let mut session = SessionV1::new(
+        AssetClass::Debris,
+        BaseInputRefV1 {
+            input_type: BaseInputType::Drawn,
+            source_path: test_file.to_str().unwrap().to_string(),
+        },
+        Seed(111),
+    ).unwrap();
+
+    session.generate_variations(5, "first batch");
+    let first_ids: Vec<_> = session.variations.iter()
+        .map(|v| v.variation_id.clone())
+        .collect();
+
+    session.generate_variations(3, "second batch");
+    let second_ids: Vec<_> = session.variations.iter()
+        .map(|v| v.variation_id.clone())
+        .collect();
+
+    assert_eq!(session.variations.len(), 3); // Replaced, not appended
+    assert_ne!(first_ids[0], second_ids[0]); // Different variations
+
+    std::fs::remove_file(&test_file).ok();
+}
+
+#[test]
+fn append_variations_preserves_existing() {
+    let temp_dir = std::env::temp_dir();
+    let test_file = temp_dir.join("forge_test_append.png");
+    std::fs::write(&test_file, b"data").unwrap();
+
+    let mut session = SessionV1::new(
+        AssetClass::ArenaWall,
+        BaseInputRefV1 {
+            input_type: BaseInputType::Drawn,
+            source_path: test_file.to_str().unwrap().to_string(),
+        },
+        Seed(222),
+    ).unwrap();
+
+    session.generate_variations(3, "first batch");
+    assert_eq!(session.variations.len(), 3);
+
+    session.append_variations(2, "second batch");
+    assert_eq!(session.variations.len(), 5); // 3 + 2
+
+    std::fs::remove_file(&test_file).ok();
+}
+
+// ============================================================================
+// Approval Tests
+// ============================================================================
+
+#[test]
+fn approve_variation_succeeds_with_valid_data() {
+    let temp_dir = std::env::temp_dir();
+    let test_file = temp_dir.join("forge_test_approve.png");
+    std::fs::write(&test_file, b"data").unwrap();
+
+    let mut session = SessionV1::new(
+        AssetClass::Pillar,
+        BaseInputRefV1 {
+            input_type: BaseInputType::Drawn,
+            source_path: test_file.to_str().unwrap().to_string(),
+        },
+        Seed(333),
+    ).unwrap();
+
+    session.generate_variations(3, "test");
+    let variation_id = session.variations[0].variation_id.clone();
+
+    let result = session.approve_variation(
+        &variation_id,
+        DimensionsCm { height: 200.0, width: 50.0, depth: 50.0 },
+        ExportSettingsV1::default(),
+        Some("test_pillar".into()),
+    );
+
+    assert!(result.is_ok());
+    assert_eq!(session.approvals.len(), 1);
+    assert_eq!(session.approvals[0].variation_id, variation_id);
+
+    std::fs::remove_file(&test_file).ok();
+}
+
+#[test]
+fn approve_variation_rejects_invalid_dimensions() {
+    let temp_dir = std::env::temp_dir();
+    let test_file = temp_dir.join("forge_test_bad_dims.png");
+    std::fs::write(&test_file, b"data").unwrap();
+
+    let mut session = SessionV1::new(
+        AssetClass::ArenaProp,
+        BaseInputRefV1 {
+            input_type: BaseInputType::Drawn,
+            source_path: test_file.to_str().unwrap().to_string(),
+        },
+        Seed(444),
+    ).unwrap();
+
+    session.generate_variations(1, "test");
+    let variation_id = session.variations[0].variation_id.clone();
+
+    // Negative dimension
+    let result = session.approve_variation(
+        &variation_id,
+        DimensionsCm { height: -100.0, width: 50.0, depth: 50.0 },
+        ExportSettingsV1::default(),
+        None,
+    );
+    assert!(matches!(result, Err(SessionError::InvalidDimensions)));
+
+    // Zero dimension
+    let result = session.approve_variation(
+        &variation_id,
+        DimensionsCm { height: 100.0, width: 0.0, depth: 50.0 },
+        ExportSettingsV1::default(),
+        None,
+    );
+    assert!(matches!(result, Err(SessionError::InvalidDimensions)));
+
+    // NaN dimension
+    let result = session.approve_variation(
+        &variation_id,
+        DimensionsCm { height: f32::NAN, width: 50.0, depth: 50.0 },
+        ExportSettingsV1::default(),
+        None,
+    );
+    assert!(matches!(result, Err(SessionError::InvalidDimensions)));
+
+    std::fs::remove_file(&test_file).ok();
+}
+
+#[test]
+fn approve_variation_rejects_unknown_id() {
+    let temp_dir = std::env::temp_dir();
+    let test_file = temp_dir.join("forge_test_unknown.png");
+    std::fs::write(&test_file, b"data").unwrap();
+
+    let mut session = SessionV1::new(
+        AssetClass::ArenaProp,
+        BaseInputRefV1 {
+            input_type: BaseInputType::Drawn,
+            source_path: test_file.to_str().unwrap().to_string(),
+        },
+        Seed(555),
+    ).unwrap();
+
+    session.generate_variations(1, "test");
+
+    let result = session.approve_variation(
+        "var_fake_nonexistent",
+        DimensionsCm { height: 100.0, width: 50.0, depth: 50.0 },
+        ExportSettingsV1::default(),
+        None,
+    );
+
+    assert!(matches!(result, Err(SessionError::UnknownVariation { .. })));
+
+    std::fs::remove_file(&test_file).ok();
+}
+
+#[test]
+fn approve_variation_rejects_duplicate() {
+    let temp_dir = std::env::temp_dir();
+    let test_file = temp_dir.join("forge_test_dup.png");
+    std::fs::write(&test_file, b"data").unwrap();
+
+    let mut session = SessionV1::new(
+        AssetClass::ArenaProp,
+        BaseInputRefV1 {
+            input_type: BaseInputType::Drawn,
+            source_path: test_file.to_str().unwrap().to_string(),
+        },
+        Seed(666),
+    ).unwrap();
+
+    session.generate_variations(1, "test");
+    let variation_id = session.variations[0].variation_id.clone();
+    let dims = DimensionsCm { height: 100.0, width: 50.0, depth: 50.0 };
+
+    // First approval should succeed
+    assert!(session.approve_variation(&variation_id, dims, ExportSettingsV1::default(), None).is_ok());
+
+    // Second approval of same variation should fail
+    let result = session.approve_variation(&variation_id, dims, ExportSettingsV1::default(), None);
+    assert!(matches!(result, Err(SessionError::DuplicateApproval { .. })));
+
+    std::fs::remove_file(&test_file).ok();
+}
+
+// ============================================================================
+// Session Validation Tests
+// ============================================================================
+
+#[test]
+fn session_validate_detects_schema_mismatch() {
+    let temp_dir = std::env::temp_dir();
+    let test_file = temp_dir.join("forge_test_schema.png");
+    std::fs::write(&test_file, b"data").unwrap();
+
+    let mut session = SessionV1::new(
+        AssetClass::ArenaProp,
+        BaseInputRefV1 {
+            input_type: BaseInputType::Drawn,
+            source_path: test_file.to_str().unwrap().to_string(),
+        },
+        Seed(777),
+    ).unwrap();
+
+    // Corrupt the schema version
+    session.schema_version = "999.0".to_string();
+
+    assert!(matches!(
+        session.validate(),
+        Err(SessionError::SchemaVersionMismatch { .. })
+    ));
+
+    std::fs::remove_file(&test_file).ok();
+}
+
+#[test]
+fn session_validate_detects_duplicate_variation_ids() {
+    let temp_dir = std::env::temp_dir();
+    let test_file = temp_dir.join("forge_test_dup_var.png");
+    std::fs::write(&test_file, b"data").unwrap();
+
+    let mut session = SessionV1::new(
+        AssetClass::ArenaProp,
+        BaseInputRefV1 {
+            input_type: BaseInputType::Drawn,
+            source_path: test_file.to_str().unwrap().to_string(),
+        },
+        Seed(888),
+    ).unwrap();
+
+    session.generate_variations(2, "test");
+
+    // Manually create duplicate ID
+    session.variations[1].variation_id = session.variations[0].variation_id.clone();
+
+    assert!(matches!(
+        session.validate(),
+        Err(SessionError::DuplicateVariation { .. })
+    ));
+
+    std::fs::remove_file(&test_file).ok();
+}
+
+// ============================================================================
+// Session Save/Load Tests
+// ============================================================================
+
+#[test]
+fn session_roundtrip_preserves_data() {
+    let temp_dir = std::env::temp_dir();
+    let input_file = temp_dir.join("forge_test_roundtrip_input.png");
+    let session_file = temp_dir.join("forge_test_roundtrip.forge.json");
+
+    std::fs::write(&input_file, b"fake image").unwrap();
+
+    // Create and populate session
+    let mut session = SessionV1::new(
+        AssetClass::Pillar,
+        BaseInputRefV1 {
+            input_type: BaseInputType::Drawn,
+            source_path: input_file.to_str().unwrap().to_string(),
+        },
+        Seed(999),
+    ).unwrap();
+
+    session.push_intent("stone pillar, cracked").unwrap();
+    session.generate_variations(3, "stone pillar, cracked");
+
+    let variation_id = session.variations[0].variation_id.clone();
+    session.approve_variation(
+        &variation_id,
+        DimensionsCm { height: 250.0, width: 60.0, depth: 60.0 },
+        ExportSettingsV1::default(),
+        Some("cracked_pillar".into()),
+    ).unwrap();
+
+    // Save
+    save_session(&session_file, &session).unwrap();
+
+    // Load
+    let loaded = load_session(&session_file).unwrap();
+
+    // Verify
+    assert_eq!(session.session_id, loaded.session_id);
+    assert_eq!(session.asset_class, loaded.asset_class);
+    assert_eq!(session.base_seed, loaded.base_seed);
+    assert_eq!(session.variations.len(), loaded.variations.len());
+    assert_eq!(session.approvals.len(), loaded.approvals.len());
+    assert_eq!(session.intent_history.len(), loaded.intent_history.len());
+
+    // Cleanup
+    std::fs::remove_file(&input_file).ok();
+    std::fs::remove_file(&session_file).ok();
+}
+
+#[test]
+fn session_save_validates_before_writing() {
+    let temp_dir = std::env::temp_dir();
+    let input_file = temp_dir.join("forge_test_save_invalid.png");
+    let session_file = temp_dir.join("forge_test_save_invalid.forge.json");
+
+    std::fs::write(&input_file, b"data").unwrap();
+
+    let mut session = SessionV1::new(
+        AssetClass::ArenaProp,
+        BaseInputRefV1 {
+            input_type: BaseInputType::Drawn,
+            source_path: input_file.to_str().unwrap().to_string(),
+        },
+        Seed(111),
+    ).unwrap();
+
+    // Corrupt the session
+    session.schema_version = "bad_version".to_string();
+
+    // Save should fail validation
+    let result = save_session(&session_file, &session);
+    assert!(result.is_err());
+
+    // File should not be created
+    assert!(!session_file.exists());
+
+    // Cleanup
+    std::fs::remove_file(&input_file).ok();
+}
+
+#[test]
+fn session_load_validates_after_reading() {
+    let temp_dir = std::env::temp_dir();
+    let session_file = temp_dir.join("forge_test_load_invalid.forge.json");
+
+    // Write invalid JSON manually
+    let bad_json = r#"{
+        "session_id": "00000000-0000-0000-0000-000000000000",
+        "asset_class": "arena_prop",
+        "schema_version": "999.0",
+        "base_input": {
+            "input_type": "drawn",
+            "source_path": "/nonexistent/path.png"
+        },
+        "base_seed": 42,
+        "base_params": {
+            "height_scale": { "value": 1.0, "min": 0.5, "max": 2.0 },
+            "extrusion_depth": { "value": 0.5, "min": 0.1, "max": 1.0 },
+            "bevel_amount": { "value": 0.1, "min": 0.0, "max": 0.5 },
+            "symmetry_break": { "value": 0.0, "min": 0.0, "max": 1.0 },
+            "erosion_intensity": { "value": 0.0, "min": 0.0, "max": 1.0 },
+            "detail_density": { "value": 0.2, "min": 0.0, "max": 1.0 }
+        },
+        "intent_history": [],
+        "variations": [],
+        "approvals": [],
+        "notes": null
+    }"#;
+
+    std::fs::write(&session_file, bad_json).unwrap();
+
+    // Load should fail validation (schema mismatch)
+    let result = load_session(&session_file);
+    assert!(result.is_err());
+
+    // Cleanup
+    std::fs::remove_file(&session_file).ok();
+}
+
+// ============================================================================
+// Dimensions Tests
+// ============================================================================
+
+#[test]
+fn dimensions_validation() {
+    let valid = DimensionsCm {
+        height: 100.0,
+        width: 50.0,
+        depth: 50.0,
+    };
+    assert!(valid.is_valid());
+
+    let negative = DimensionsCm { height: -10.0, width: 50.0, depth: 50.0 };
+    assert!(!negative.is_valid());
+
+    let zero = DimensionsCm { height: 0.0, width: 50.0, depth: 50.0 };
+    assert!(!zero.is_valid());
+
+    let nan = DimensionsCm { height: f32::NAN, width: 50.0, depth: 50.0 };
+    assert!(!nan.is_valid());
+
+    let infinity = DimensionsCm { height: f32::INFINITY, width: 50.0, depth: 50.0 };
+    assert!(!infinity.is_valid());
+}
