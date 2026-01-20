@@ -40,14 +40,14 @@ impl Canvas {
         let valid = x < self.width && y < self.height;
 
         debug!("Coordinate validity: {}", valid);
-        valid;
+        valid
     }
 
     //convert 2d coordinates to 1d index
     fn coord_to_index(&self, x: u32, y: u32) -> usize {
         let index = (y * self.width + x) as usize;
         debug!("Converted coordinates ({}, {}) to index {}", x, y, index);
-        index;
+        index
     }
 
     // Get the color of a pixel at (x, y)
@@ -119,5 +119,53 @@ impl Canvas {
 impl Default for Canvas {
     fn default() -> Self {
         Canvas::new(512, 512, Color32::WHITE)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_canvas_creation() {
+        let canvas = Canvas::new(100, 100, Color32::BLACK);
+        assert_eq!(canvas.width(), 100);
+        assert_eq!(canvas.height(), 100);
+
+        // Check corners and center
+        assert_eq!(canvas.get_pixel(0, 0).unwrap(), Color32::BLACK);
+        assert_eq!(canvas.get_pixel(99, 99).unwrap(), Color32::BLACK);
+        assert_eq!(canvas.get_pixel(50, 50).unwrap(), Color32::BLACK);
+    }
+
+    #[test]
+    fn test_set_get_pixel() {
+        let mut canvas = Canvas::new(10, 10, Color32::WHITE);
+        assert!(canvas.set_pixel(5, 5, Color32::RED));
+        assert_eq!(canvas.get_pixel(5, 5).unwrap(), Color32::RED);
+        assert!(!canvas.set_pixel(10, 10, Color32::BLUE)); // Out of bounds
+        assert!(canvas.get_pixel(10, 10).is_none()); // Out of bounds
+    }
+
+    #[test]
+    fn test_fill_canvas() {
+        let mut canvas = Canvas::new(20, 20, Color32::WHITE);
+        canvas.fill(Color32::GREEN);
+        for y in 0..20 {
+            for x in 0..20 {
+                assert_eq!(canvas.get_pixel(x, y).unwrap(), Color32::GREEN);
+            }
+        }
+    }
+
+    #[test]
+    fn test_clear_canvas() {
+        let mut canvas = Canvas::new(15, 15, Color32::BLUE);
+        canvas.clear();
+        for y in 0..15 {
+            for x in 0..15 {
+                assert_eq!(canvas.get_pixel(x, y).unwrap(), Color32::WHITE);
+            }
+        }
     }
 }
