@@ -13,3 +13,10 @@ pub struct AiResponseV1 {
     pub confidence: Option<f32>,
     pub notes: Option<String>,
 }
+
+pub struct AiTelemetryV1 {
+    pub model_name: String,
+    pub time_taken_s: f32,
+    pub version: String,
+    pub warnings: Vec<String>,
+}
