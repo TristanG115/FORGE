@@ -101,7 +101,7 @@ impl Canvas {
     // Clear canvas
     pub fn clear(&mut self) {
         info!("Clearing canvas");
-        self.fill(Color32::WHITE);
+        self.fill(Color32::TRANSPARENT);
         trace!("Canvas cleared");
     }
 
@@ -118,7 +118,7 @@ impl Canvas {
 // Create a default canvas
 impl Default for Canvas {
     fn default() -> Self {
-        Canvas::new(512, 512, Color32::WHITE)
+        Canvas::new(512, 512, Color32::TRANSPARENT)
     }
 }
 
@@ -164,7 +164,7 @@ mod tests {
         canvas.clear();
         for y in 0..15 {
             for x in 0..15 {
-                assert_eq!(canvas.get_pixel(x, y).unwrap(), Color32::WHITE);
+                assert_eq!(canvas.get_pixel(x, y).unwrap(), Color32::TRANSPARENT);
             }
         }
     }
